@@ -58,12 +58,12 @@ typedef struct BLOCK{
 
 class FileSystem {
 	using T_OperationFunc = void(FileSystem::*)(initializer_list<string>);
-	static const int BLOCK_NUMBER = 100;
+	static const int BLOCK_NUMBER = 10;
 	static const int BLOCK_SIZE = 512;
 	map <string, T_OperationFunc> map_func;
 	map <string, int> map_dataLen;							//file name map to data file length. 
 	list<T_BLOCK> m_blocks;
-	T_BLOCK m_rootBlock;
+	int m_currentDataBlkNum;
 
 public:
 	FileSystem() {
@@ -76,6 +76,7 @@ public:
 		map_func.insert(std::pair<string, T_OperationFunc>("SEEK", &FileSystem::Seek));
 		initialBlocks();
 		SetRootDirectory();
+		m_currentDataBlkNum = -1;
 	}
 
 	~FileSystem() {
@@ -92,11 +93,11 @@ public:
 
 	T_BLOCK& allocateBlock() {
 		T_BLOCK block = m_blocks.front();
-		if (block.num == 100) {
+		if (block.num == BLOCK_NUMBER) {
 			cout << "The Memory is exhausted, wait for Memory Compaction... " << endl;
 			MemoryCompaction();
 			block = m_blocks.front();
-			if (block.num == 100) {
+			if (block.num == BLOCK_NUMBER) {
 				cout << "The Memory is exhausted!!!" << endl;
 				return m_blocks.front();
 			}
@@ -115,7 +116,16 @@ public:
 	}
 
 	void freeBlock(int num) {
-
+		for (list<T_BLOCK>::iterator it = m_blocks.begin(); it != m_blocks.end();) {
+			if (it->num == num) {
+				T_BLOCK block;
+				block.num = it->num;
+				it = m_blocks.erase(it);
+				m_blocks.push_front(block);
+			}
+			else
+				++it;
+		}
 	}
 
 	void MemoryCompaction() {
@@ -130,17 +140,30 @@ public:
 		T_Directory rootBlock;
 		T_BLOCK& block = allocateBlock();
 		memcpy(&(block.block), &rootBlock, sizeof(T_Directory));
-		m_rootBlock = block;
 	}
 
 	T_Directory& GetRootBlock() {
-		return *((struct Directory*)&m_rootBlock);
+		for (list<T_BLOCK>::iterator it = m_blocks.begin(); it != m_blocks.end(); ++it) {
+			if (it->num == 0) {
+				return *((struct Directory*)&(*it).block);
+			}
+		}
+		assert(0);
+	}
+
+	T_BLOCK& GetBlockByNum(int num) {
+		for (list<T_BLOCK>::iterator it = m_blocks.begin(); it != m_blocks.end(); ++it) {
+			if (it->num == num) {
+				return *it;
+			}
+		}
+		assert(0);
 	}
 
 	T_Directory& GetDirBlockByNum(int num) {
 		for (list<T_BLOCK>::iterator it = m_blocks.begin(); it != m_blocks.end(); ++it) {
 			if (it->num == num) {
-				return *((struct Directory*)&(*it));
+				return *((struct Directory*)&(*it).block);
 			}		 
 		}
 		assert(0);
@@ -149,7 +172,7 @@ public:
 	T_Data& GetDataBlockByNum(int num) {
 		for (list<T_BLOCK>::iterator it = m_blocks.begin(); it != m_blocks.end(); ++it) {
 			if (it->num == num) {
-				return *((struct data*)&(*it));
+				return *((struct data*)&(*it).block);
 			}
 		}
 		assert(0);
@@ -161,7 +184,6 @@ public:
 			if (dir.subdir[i].type == 'D') {
 				wholeName += dir.subdir[i].name;
 				DeleteDir(dir.subdir[i].link, dir.subdir[i].name, wholeName);
-
 				dir.subdir[i].type = 'F';
 				memset(dir.subdir[i].name, 0, sizeof(dir.subdir[i].name));
 				dir.subdir[i].link = -1;
@@ -174,32 +196,108 @@ public:
 				int start = dir.subdir[i].size - dataLen;
 				memset(data.user_data + start, 0, dataLen);
 			}
-			else
+			else {
+				freeBlock(num);
 				return;
+			}
+				
 		}
 	}
+	
+	void DeleteData(int num, const char* name, string wholeName) {
+		int oldNum = num;
+		do {
+			T_Data& data = GetDataBlockByNum(oldNum);
+			int blkNum = data.forward;
+			freeBlock(oldNum);
+			oldNum = blkNum;
+		} while (oldNum != -1);
 
-	void DeleteDataFile() {
-
+		/*int dataLen = map_dataLen[wholeName];
+		int start = dir.subdir[i].size - dataLen;
+		memset(data.user_data + start, 0, dataLen);*/
 	}
 
-	void SetSubDir(T_Directory& dir, string name, string wholeName) {
+	int SetDataByRecreate(T_Directory& dir, string name, string wholeName, int dirNum) {
+		for (int i = 0; i < 31; ++i) {
+			if (dir.subdir[i].type == 'U' && strcmp(dir.subdir[i].name, name.c_str()) == 0) {
+				DeleteData(dir.subdir[i].link, name.c_str(), wholeName);
+				dir.subdir[i].type = 'F';
+				memset(dir.subdir[i].name, 0, sizeof(dir.subdir[i].name));
+				dir.subdir[i].link = -1;
+				dir.subdir[i].size = -1;
+				int num = SetDataByRecreate(dir, name, wholeName, dirNum);
+				return num;
+			}
+			else if (dir.subdir[i].type == 'F') {
+				dir.subdir[i].type = 'U';
+				memcpy(dir.subdir[i].name, name.c_str(), sizeof(dir.subdir[i].name));
+				T_BLOCK& block = allocateBlock();
+				int num = block.num;
+				dir.subdir[i].link = num;
+				T_BLOCK& blockDir = GetBlockByNum(dirNum);
+				memcpy(&(blockDir.block), &dir, sizeof(T_Directory));
+				T_Data tempData;
+				memcpy(&(block.block), &tempData, sizeof(T_Data));
+				m_currentDataBlkNum = num;
+				return num;
+			}
+		}
+		assert(0);
+	}
+
+	int SetSubDirByRecreate(T_Directory& dir, string name, string wholeName, int dirNum) {
 		for (int i = 0; i < 31; ++i) {
 			if (dir.subdir[i].type == 'D' && strcmp(dir.subdir[i].name, name.c_str()) == 0) {
 				DeleteDir(dir.subdir[i].link, name.c_str(), wholeName);
+				dir.subdir[i].type = 'F';
+				memset(dir.subdir[i].name, 0, sizeof(dir.subdir[i].name));
+				dir.subdir[i].link = -1;
+				dir.subdir[i].size = -1;
+				int num = SetSubDirByRecreate(dir, name, wholeName, dirNum);
+				return num;
+			}
+			else if (dir.subdir[i].type == 'F') {
+				dir.subdir[i].type = 'D';
+				memcpy(dir.subdir[i].name, name.c_str(), sizeof(dir.subdir[i].name));
+				T_BLOCK& block = allocateBlock();
+				int num = block.num;
+				dir.subdir[i].link = num;
+				T_BLOCK& blockDir = GetBlockByNum(dirNum);
+				memcpy(&(blockDir.block), &dir, sizeof(T_Directory));
+				T_Directory tempDir;
+				memcpy(&(block.block), &tempDir, sizeof(T_Directory));
+				return num;
+			}
+			else {
+				assert(0);
 			}
 		}
-
+		assert(0);
 	}
 
-	void SetDirToBlock(char* name) {
-		T_BLOCK& block = allocateBlock();
-
-
-	}
-
-	void SetDataToBlock() {
-
+	int SetSubDir(T_Directory& dir, string name, int dirNum) {
+		for (int i = 0; i < 31; ++i) {
+			if (dir.subdir[i].type == 'D' && strcmp(dir.subdir[i].name, name.c_str()) == 0) {
+				return dir.subdir[i].link;
+			}
+			else if (dir.subdir[i].type == 'F') {
+				dir.subdir[i].type = 'D';
+				memcpy(dir.subdir[i].name, name.c_str(), sizeof(dir.subdir[i].name));
+				T_BLOCK& block = allocateBlock();
+				int num = block.num;
+				dir.subdir[i].link = num;
+				T_BLOCK& blockDir = GetBlockByNum(dirNum);
+				memcpy(&(blockDir.block), &dir, sizeof(T_Directory));
+				T_Directory tempDir;
+				memcpy(&(block.block), &tempDir, sizeof(T_Directory));
+				return num;
+			}
+			else {
+				assert(0);
+			}
+		}
+		assert(0);
 	}
 
 	void Operation(istringstream& ss) {
@@ -219,27 +317,30 @@ public:
 		assert(str.size() == 2);
 		string type = *(str.begin());
 		string name = *(str.begin() + 1);
+		string subName = name;
 		int slash_num = std::count(name.begin(), name.end(), '/');
 		int depth = slash_num + 1;
-		//if exist, delete it then recreate
-		//Delete();
-		T_Directory& dir = GetRootBlock();
+		T_Directory dir = GetRootBlock();
+		int num = 0;
 		while (depth--) {
-			string subName = name.substr(0, name.find('/') - 1);
-			if (type == "D") {
-				SetSubDir(dir, subName, name);
-				//SetDirToBlock();
-			}
-			else if (type == "U") {
-
+			string tempSubName = subName.substr(0, subName.find('/'));
+			if (depth == 0) {
+				if (type == "D") {
+					SetSubDirByRecreate(dir, tempSubName, name, num);
+				}
+				else if (type == "U") {
+					SetDataByRecreate(dir, tempSubName, name, num);
+				}
+				else {
+					assert(0);
+				}
 			}
 			else {
-				assert(0);
+				num = SetSubDir(dir, tempSubName, num);
+				subName = subName.substr(subName.find('/') + 1);
+				dir = GetDirBlockByNum(num);
 			}
-			name = name.substr(name.find('/') + 1);
-			//dir = GetDirBlock();
 		}
-	
 	}
 
 	void Open(initializer_list<string> str) {
@@ -260,7 +361,11 @@ public:
 	}
 
 	void Write(initializer_list<string> str) {
-		
+		assert(str.size() == 2);
+		string len = *(str.begin());
+		string text = *(str.begin() + 1);
+		int bytesNum = stoi(len);
+
 	}
 
 	void Seek(initializer_list<string> str) {
