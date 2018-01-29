@@ -54,16 +54,33 @@ typedef struct BLOCK{
 		memset(block, 0, 512);
 	}
 }T_BLOCK;
+
+typedef struct dataFile {
+	int num;
+	int start;
+	int bytesNum;
+}T_DATA_FILE;
 #pragma pack ()
 
 class FileSystem {
 	using T_OperationFunc = void(FileSystem::*)(initializer_list<string>);
 	static const int BLOCK_NUMBER = 10;
 	static const int BLOCK_SIZE = 512;
+	static const int BLOCK_DATA_SIZE = 504;
 	map <string, T_OperationFunc> map_func;
-	map <string, int> map_dataLen;							//file name map to data file length. 
+	map <string, T_DATA_FILE> map_dataFile;							//file name map to data file length. 
 	list<T_BLOCK> m_blocks;
 	int m_currentDataBlkNum;
+	string m_currentFileName;
+	int m_currentOffset;
+	int m_freeBlkNum;
+	enum STATE {
+		NO_PERMITTED,
+		INPUT,
+		OUTPUT,
+		UPDATE
+	};
+	STATE m_currentState;
 
 public:
 	FileSystem() {
@@ -77,9 +94,16 @@ public:
 		initialBlocks();
 		SetRootDirectory();
 		m_currentDataBlkNum = -1;
+		m_freeBlkNum = BLOCK_NUMBER;
+		m_currentState = NO_PERMITTED;
+		m_currentOffset = -1;
 	}
 
 	~FileSystem() {
+	}
+
+	void SetState() {
+
 	}
 
 	void initialBlocks() {
@@ -105,12 +129,15 @@ public:
 			{
 				m_blocks.pop_front();
 				m_blocks.push_back(block);
+				m_currentDataBlkNum = m_blocks.back().num;
 				return m_blocks.back();
 			}
 		}
 		else {
 			m_blocks.pop_front();
 			m_blocks.push_back(block);
+			--m_freeBlkNum;
+			m_currentDataBlkNum = m_blocks.back().num;
 			return m_blocks.back();
 		}
 	}
@@ -122,6 +149,8 @@ public:
 				block.num = it->num;
 				it = m_blocks.erase(it);
 				m_blocks.push_front(block);
+				++m_freeBlkNum;
+				return;
 			}
 			else
 				++it;
@@ -192,7 +221,7 @@ public:
 			else if (dir.subdir[i].type == 'U') {
 				T_Data& data = GetDataBlockByNum(dir.subdir[i].link);
 				wholeName += dir.subdir[i].name;
-				int dataLen = map_dataLen[wholeName];
+				int dataLen = map_dataFile[wholeName].bytesNum;
 				int start = dir.subdir[i].size - dataLen;
 				memset(data.user_data + start, 0, dataLen);
 			}
@@ -212,10 +241,6 @@ public:
 			freeBlock(oldNum);
 			oldNum = blkNum;
 		} while (oldNum != -1);
-
-		/*int dataLen = map_dataLen[wholeName];
-		int start = dir.subdir[i].size - dataLen;
-		memset(data.user_data + start, 0, dataLen);*/
 	}
 
 	int SetDataByRecreate(T_Directory& dir, string name, string wholeName, int dirNum) {
@@ -239,7 +264,13 @@ public:
 				memcpy(&(blockDir.block), &dir, sizeof(T_Directory));
 				T_Data tempData;
 				memcpy(&(block.block), &tempData, sizeof(T_Data));
-				m_currentDataBlkNum = num;
+				//m_currentDataBlkNum = num;
+				m_currentFileName = wholeName;
+				T_DATA_FILE df;
+				df.num = num;
+				df.start = 0;
+				df.bytesNum = 0;
+				map_dataFile[wholeName] = df;
 				return num;
 			}
 		}
@@ -302,7 +333,11 @@ public:
 
 	void Operation(istringstream& ss) {
 		string str1, str2, str3;
-		ss >> str1 >> str2 >> str3;
+		ss >> str1 >> str2;
+		getline(ss, str3);
+		str3.erase(0, 1);   //delete space
+		transform(str1.begin(), str1.end(), str1.begin(), toupper);
+		transform(str2.begin(), str2.end(), str2.begin(), toupper);
 		T_OperationFunc pFun = map_func[str1];
 		if (str2.empty())
 			(this->*pFun)({});
@@ -311,7 +346,6 @@ public:
 		else
 			(this->*pFun)({ str2, str3 });
 	}
-
 
 	void Create(initializer_list<string> str) {
 		assert(str.size() == 2);
@@ -344,7 +378,31 @@ public:
 	}
 
 	void Open(initializer_list<string> str) {
-
+		assert(str.size() == 2);
+		string mode = *(str.begin());
+		string name = *(str.begin() + 1);
+		m_currentFileName = name;
+		if (map_dataFile.find(m_currentFileName) == map_dataFile.end())
+		{
+			cout << "**************WARNING************* :" << endl;
+			cout << "This file's not existed!" << endl;
+			cout << "********************************** :" << endl;
+			return;
+		}
+		else {
+			if (mode == "I"){
+				m_currentState = STATE::INPUT;
+				m_currentOffset = 0;
+			}
+			else if (mode == "O") {
+				m_currentState = STATE::OUTPUT;
+				m_currentOffset = map_dataFile[m_currentFileName].bytesNum;
+			}
+			else {
+				m_currentState = STATE::UPDATE;
+				m_currentOffset = 0;
+			}
+		}
 	}
 
 	void Close(initializer_list<string> str) {
@@ -357,19 +415,68 @@ public:
 	}
 
 	void Read(initializer_list<string> str) {
-
+		if (m_currentState != STATE::INPUT || m_currentState != STATE::UPDATE) {
+			cout << "**************WARNING************* :" << endl;
+			cout << "Only INPUT or UPDATE mode can read!" << endl;
+			cout << "********************************** :" << endl;
+			return;
+		}
 	}
 
 	void Write(initializer_list<string> str) {
+		if (m_currentState != STATE::OUTPUT || m_currentState != STATE::UPDATE) {
+			cout << "**************WARNING************* :" << endl;
+			cout << "Only OUTPUT or UPDATE mode can write!" << endl;
+			cout << "********************************** :" << endl;
+			return;
+		}
 		assert(str.size() == 2);
 		string len = *(str.begin());
 		string text = *(str.begin() + 1);
 		int bytesNum = stoi(len);
-
+		int needBlkNum = -1;
+		if (bytesNum % BLOCK_DATA_SIZE == 0)
+			needBlkNum = bytesNum / BLOCK_DATA_SIZE;
+		else 
+			needBlkNum = bytesNum / BLOCK_DATA_SIZE + 1;
+		if (needBlkNum > m_freeBlkNum) {
+			MemoryCompaction();
+			if (needBlkNum > m_freeBlkNum) {
+				cout << "**************WARNING************* :" << endl;
+				cout << "No Sufficient Space!!!" << endl;
+				cout << "********************************** :" << endl;
+				return;
+			}
+		}
+		else {
+			needBlkNum = bytesNum / BLOCK_DATA_SIZE;
+			int currentDataNum = map_dataFile[m_currentFileName].num;
+			map_dataFile[m_currentFileName].bytesNum = bytesNum;
+			T_Data& block = GetDataBlockByNum(currentDataNum);
+			int dataBlkNum = m_currentDataBlkNum;
+			text.erase(text.size() - 1, string::npos);
+			text.erase(0, 1);
+			while (needBlkNum--) {
+				memcpy(block.user_data, text.c_str(), sizeof(block.user_data));
+				text = text.substr(std::min((int)text.size(), BLOCK_DATA_SIZE));	
+				bytesNum -= BLOCK_DATA_SIZE;
+				T_BLOCK& dataBlk = allocateBlock();
+				T_Data& tempBlk = GetDataBlockByNum(dataBlk.num);
+				tempBlk.back = dataBlkNum;
+				block.forward = dataBlk.num;
+				block = tempBlk;
+			}
+			memcpy(block.user_data, text.c_str(), bytesNum);
+		}
 	}
 
 	void Seek(initializer_list<string> str) {
-
+		if (m_currentState != STATE::INPUT || m_currentState != STATE::UPDATE) {
+			cout << "**************WARNING************* :" << endl;
+			cout << "Only INPUT or UPDATE mode can seek!" << endl;
+			cout << "********************************** :" << endl;
+			return;
+		}
 	}
 
 };
