@@ -67,7 +67,7 @@ typedef struct dataFile {
 
 class FileSystem {
 	using T_OperationFunc = void(FileSystem::*)(initializer_list<string>);
-	static const int BLOCK_NUMBER = 10;
+	static const int BLOCK_NUMBER = 100;
 	static const int BLOCK_SIZE = 512;
 	static const int BLOCK_DATA_SIZE = 504;
 	map <string, T_OperationFunc> map_func;
@@ -126,7 +126,7 @@ public:
 	}
 
 	T_BLOCK& allocateBlock() {
-		T_BLOCK block = m_blocks.front();
+		T_BLOCK& block = m_blocks.front();
 		if (block.num == BLOCK_NUMBER) {
 			cout << "The Memory is exhausted, wait for Memory Compaction... " << endl;
 			//MemoryCompaction();
@@ -137,15 +137,15 @@ public:
 			}
 			else
 			{
-				m_blocks.pop_front();
 				m_blocks.push_back(block);
+				m_blocks.pop_front();
 				m_currentDataBlkNum = m_blocks.back().num;
 				return m_blocks.back();
 			}
 		}
 		else {
-			m_blocks.pop_front();
 			m_blocks.push_back(block);
+			m_blocks.pop_front();
 			--m_freeBlkNum;
 			m_currentDataBlkNum = m_blocks.back().num;
 			return m_blocks.back();
@@ -222,7 +222,7 @@ public:
 		T_Directory& dir = GetDirBlockByNum(num);
 		for (int i = 0; i < 31; ++i) {
 			if (dir.subdir[i].type == 'D') {
-				wholeName += dir.subdir[i].name;
+				//wholeName += dir.subdir[i].name;
 				DeleteDir(dir.subdir[i].link, wholeName);
 				dir.subdir[i].type = 'F';
 				memset(dir.subdir[i].name, 0, sizeof(dir.subdir[i].name));
@@ -230,11 +230,15 @@ public:
 				dir.subdir[i].size = -1;
 			}
 			else if (dir.subdir[i].type == 'U') {
-				T_Data& data = GetDataBlockByNum(dir.subdir[i].link);
+				//T_Data& data = GetDataBlockByNum(dir.subdir[i].link);
+				DeleteData(dir.subdir[i].link);
+				wholeName += '/';
 				wholeName += dir.subdir[i].name;
-				int dataLen = map_dataFile[wholeName].bytesNum;
-				int start = dir.subdir[i].size - dataLen;
-				memset(data.user_data + start, 0, dataLen);
+				map_dataFile.erase(wholeName);
+				//wholeName += dir.subdir[i].name;
+				//int dataLen = map_dataFile[wholeName].bytesNum;
+				//int start = dir.subdir[i].size - dataLen;
+				//memset(data.user_data + start, 0, dataLen);
 			}
 			else {
 				freeBlock(num);
@@ -333,7 +337,7 @@ public:
 		assert(0);
 	}
 
-	int SetSubDir(T_Directory& dir, string name, int dirNum) {
+	int SetSubDir(T_Directory& dir, string name, int dirNum, string wholeName) {
 		for (int i = 0; i < 31; ++i) {
 			if (dir.subdir[i].type == 'D' && strcmp(dir.subdir[i].name, name.c_str()) == 0) {
 				return dir.subdir[i].link;
@@ -350,6 +354,13 @@ public:
 				memcpy(&(blockDir.block), &dir, sizeof(T_Directory));
 				T_Directory tempDir;
 				memcpy(&(block.block), &tempDir, sizeof(T_Directory));
+				T_DATA_FILE df;
+				df.num = num;
+				df.end = 0;
+				df.bytesNum = 0;
+				df.type = 'D';
+				df.parent = dirNum;
+				map_dataFile[wholeName] = df;
 				return num;
 			}
 			else {
@@ -380,6 +391,7 @@ public:
 		string type = *(str.begin());
 		string name = *(str.begin() + 1);
 		string subName = name;
+		string dirName = subName.substr(0, subName.find('/'));;
 		int slash_num = std::count(name.begin(), name.end(), '/');
 		int depth = slash_num + 1;
 		T_Directory dir = GetRootBlock();
@@ -398,9 +410,11 @@ public:
 				}
 			}
 			else {
-				num = SetSubDir(dir, tempSubName, num);
+				num = SetSubDir(dir, tempSubName, num, dirName);
 				subName = subName.substr(subName.find('/') + 1);
 				dir = GetDirBlockByNum(num);
+				dirName += "/";
+				dirName += subName.substr(0, subName.find('/'));
 			}
 		}
 	}
@@ -444,8 +458,9 @@ public:
 			if (map_dataFile[name].type == 'U') {
 				DeleteData(map_dataFile[name].num);
 				T_Directory& dir = GetDirBlockByNum(map_dataFile[name].parent);
+				string partName = name.substr(name.find_last_of('/') + 1);
 				for (int i = 0; i < 31; ++i) {
-					if (dir.subdir[i].type == 'U' && strcmp(dir.subdir[i].name, name.c_str()) == 0) {
+					if (dir.subdir[i].type == 'U' && strcmp(dir.subdir[i].name, partName.c_str()) == 0) {
 						dir.subdir[i].type = 'F';
 						memset(dir.subdir[i].name, 0, sizeof(dir.subdir[i].name));
 						dir.subdir[i].link = -1;
@@ -454,8 +469,19 @@ public:
 				}
 			}
 			else if (map_dataFile[name].type == 'D') {
-				DeleteDir(map_dataFile[name].parent, name);
+				DeleteDir(map_dataFile[name].num, name);
+				T_Directory& dir = GetDirBlockByNum(map_dataFile[name].parent);
+				string partName = name.substr(name.find_last_of('/') + 1);
+				for (int i = 0; i < 31; ++i) {
+					if (dir.subdir[i].type == 'D' && strcmp(dir.subdir[i].name, partName.c_str()) == 0) {
+						dir.subdir[i].type = 'F';
+						memset(dir.subdir[i].name, 0, sizeof(dir.subdir[i].name));
+						dir.subdir[i].link = -1;
+						dir.subdir[i].size = -1;
+					}
+				}
 			}
+			map_dataFile.erase(name);
 		}
 		else {
 			cout << "**************WARNING************* :" << endl;
@@ -465,9 +491,9 @@ public:
 	}
 
 	void addBlank(char* str, int num) {
-		//assert(num <= BLOCK_DATA_SIZE);
-		memset(str, ' ', min(num, BLOCK_DATA_SIZE));
-		str[BLOCK_DATA_SIZE - 1] = '\0';
+		assert(num <= BLOCK_DATA_SIZE);
+		memset(str, ' ', num);
+		//str[BLOCK_DATA_SIZE - 1] = '\0';
 	}
 
 	void Read(initializer_list<string> str) {
@@ -480,12 +506,31 @@ public:
 		assert(str.size() == 1);
 		string len = *(str.begin());
 		int bytesNum = stoi(len);
+		int originLen = bytesNum;
 		int currentDataNum = map_dataFile[m_currentFileName].num;
 		int fileBytesNum = map_dataFile[m_currentFileName].bytesNum;
-		T_Data& block = GetDataBlockByNum(currentDataNum);
-		string outPut(&block.user_data[0], &block.user_data[0] + min(fileBytesNum, bytesNum));
+		if (bytesNum > fileBytesNum)
+			bytesNum = fileBytesNum;
+		int needBlkNum = bytesNum / BLOCK_DATA_SIZE;
+		T_Data& r_blk = GetDataBlockByNum(currentDataNum);
+		T_Data* block = &r_blk;
+		int dataBlkNum = currentDataNum;
+		string outPut;
+		while (needBlkNum--) {
+			outPut += block->user_data;
+			bytesNum -= BLOCK_DATA_SIZE;
+			int fwd = block->forward;
+			assert(fwd != -1);
+			T_Data& r_blk = GetDataBlockByNum(fwd);
+			block = &r_blk;
+		}
+		char temp[BLOCK_DATA_SIZE];
+		memcpy(temp, block->user_data, bytesNum);
+		temp[max(0,bytesNum - 1)] = '\0';
+		outPut += temp;
 		cout << outPut << endl;
-		if (fileBytesNum < bytesNum)
+		//cout << outPut.length() << endl;
+		if (fileBytesNum < originLen)
 			cout << "*******File length is less than N , the end of file is reached.**********" << endl;
 	}
 
@@ -519,16 +564,19 @@ public:
 			needBlkNum = bytesNum / BLOCK_DATA_SIZE;
 			int currentDataNum = map_dataFile[m_currentFileName].num;
 			int fileBytesNum = map_dataFile[m_currentFileName].bytesNum;
-			T_Data& block = GetDataBlockByNum(currentDataNum);
+			T_Data& r_blk = GetDataBlockByNum(currentDataNum);
+			T_Data* block = &r_blk;
 			int dataBlkNum = currentDataNum;
 			text.erase(text.size() - 1, string::npos);
 			text.erase(0, 1);
 
 			if (fileBytesNum == 0) {
 				while (needBlkNum--) {
-					memcpy(block.user_data, text.c_str(), BLOCK_DATA_SIZE);
-					if (text.length() < bytesNum)
-						addBlank(block.user_data + text.length(), bytesNum - text.length());
+					memcpy(block->user_data, text.c_str(), BLOCK_DATA_SIZE);
+					if (text.length() < bytesNum){
+						addBlank(block->user_data + text.length(), min(BLOCK_DATA_SIZE, bytesNum) - text.length());
+						block->user_data[BLOCK_DATA_SIZE - 1] = '\0';
+					}
 					text = text.substr(std::min((int)text.size(), BLOCK_DATA_SIZE));
 					bytesNum -= BLOCK_DATA_SIZE;
 					T_BLOCK& dataBlk = allocateBlock();
@@ -539,10 +587,14 @@ public:
 					T_Data& tempBlk = GetDataBlockByNum(dataBlk.num);
 					tempBlk.back = dataBlkNum;
 					dataBlkNum = dataBlk.num;
-					block.forward = dataBlk.num;
-					block = tempBlk;
+					block->forward = dataBlk.num;
+					block = &tempBlk;
 				}
-				memcpy(block.user_data, text.c_str(), bytesNum);
+				memcpy(block->user_data, text.c_str(), bytesNum);
+				if (text.length() < bytesNum) {
+					addBlank(block->user_data + text.length(), min(BLOCK_DATA_SIZE, bytesNum) - text.length());
+					block->user_data[BLOCK_DATA_SIZE - 1] = '\0';
+				}
 				map_dataFile[m_currentFileName].end = bytesNum;
 				map_dataFile[m_currentFileName].bytesNum = originBytesNum;
 			}
@@ -553,24 +605,26 @@ public:
 					int offset = m_currentOffset % BLOCK_DATA_SIZE;
 					int targetNum = currentDataNum;
 					while (index--) {
-						targetNum = block.forward;
-						block = GetDataBlockByNum(targetNum);
+						targetNum = block->forward;
+						block = &GetDataBlockByNum(targetNum);
 					}
 
 					while (bytesNum > 0) {
 						int copySize = min(BLOCK_DATA_SIZE - offset, bytesNum);
-						memcpy(block.user_data + offset, text.c_str(), copySize);
+						memcpy(block->user_data + offset, text.c_str(), copySize);
+						if (text.length() < copySize) {
+							addBlank(block->user_data + offset + text.length(), min(BLOCK_DATA_SIZE, copySize) - text.length());
+							block->user_data[BLOCK_DATA_SIZE - 1] = '\0';
+						}
 						offset = 0;
-						if (text.length() < bytesNum)
-							addBlank(block.user_data + text.length(), bytesNum - text.length());
 						if (bytesNum <= BLOCK_DATA_SIZE) {
 							map_dataFile[m_currentFileName].end = bytesNum;
 						}
 						bytesNum -= copySize;
 						if (bytesNum > 0) {
-							if (block.forward != -1) {
-								block = GetDataBlockByNum(block.forward);
-								targetNum = block.forward;
+							if (block->forward != -1) {
+								block = &GetDataBlockByNum(block->forward);
+								targetNum = block->forward;
 							}
 							else {
 								T_BLOCK& dataBlk = allocateBlock();
@@ -581,8 +635,8 @@ public:
 								T_Data& tempBlk = GetDataBlockByNum(dataBlk.num);
 								tempBlk.back = targetNum;
 								targetNum = dataBlk.num;
-								block.forward = targetNum;
-								block = tempBlk;
+								block->forward = targetNum;
+								block = &tempBlk;
 							}
 							if (text.length() <= copySize)
 								text = "";
@@ -598,24 +652,26 @@ public:
 					int offset = m_currentOffset % BLOCK_DATA_SIZE;
 					int targetNum = m_currentDataBlkNum;
 					while (index--) {
-						targetNum = block.forward;
-						block = GetDataBlockByNum(targetNum);
+						targetNum = block->forward;
+						block = &GetDataBlockByNum(targetNum);
 					}
 					
 					while (bytesNum > 0) {
 						int copySize = min(BLOCK_DATA_SIZE - offset, bytesNum);
+						memcpy(block->user_data + offset, text.c_str(), copySize);
+						if (text.length() < bytesNum) {
+							addBlank(block->user_data + offset + text.length(), min(BLOCK_DATA_SIZE, copySize) - text.length());
+							block->user_data[BLOCK_DATA_SIZE - 1] = '\0';
+						}
 						offset = 0;
-						memcpy(block.user_data + offset, text.c_str(), copySize);
-						if (text.length() < bytesNum)
-							addBlank(block.user_data + text.length(), bytesNum - text.length());
 						if (text.length() <= copySize)
 							text = "";
 						else
 							text = text.substr(copySize);
 						bytesNum -= copySize;
 						if (bytesNum > 0) {
-							assert(block.forward != -1);
-							block = GetDataBlockByNum(block.forward);
+							assert(block->forward != -1);
+							block = &GetDataBlockByNum(block->forward);
 						}	
 					}
 				}
