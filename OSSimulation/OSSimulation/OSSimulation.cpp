@@ -222,7 +222,8 @@ public:
 		T_Directory& dir = GetDirBlockByNum(num);
 		for (int i = 0; i < 31; ++i) {
 			if (dir.subdir[i].type == 'D') {
-				//wholeName += dir.subdir[i].name;
+				wholeName += '/';
+				wholeName += dir.subdir[i].name;
 				DeleteDir(dir.subdir[i].link, wholeName);
 				dir.subdir[i].type = 'F';
 				memset(dir.subdir[i].name, 0, sizeof(dir.subdir[i].name));
@@ -524,9 +525,9 @@ public:
 			T_Data& r_blk = GetDataBlockByNum(fwd);
 			block = &r_blk;
 		}
-		char temp[BLOCK_DATA_SIZE];
+		char temp[BLOCK_DATA_SIZE + 1];
 		memcpy(temp, block->user_data, bytesNum);
-		temp[max(0,bytesNum - 1)] = '\0';
+		temp[max(0,bytesNum)] = '\0';
 		outPut += temp;
 		cout << outPut << endl;
 		//cout << outPut.length() << endl;
