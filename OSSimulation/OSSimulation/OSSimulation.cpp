@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+
 #include <list>
 #include <map>
 #include <sstream>
@@ -203,7 +204,7 @@ public:
 		for (list<T_BLOCK>::iterator it = m_blocks.begin(); it != m_blocks.end(); ++it) {
 			if (it->num == num) {
 				return *((struct Directory*)&(*it).block);
-			}		 
+			}
 		}
 		assert(0);
 	}
@@ -238,10 +239,10 @@ public:
 			else {
 				freeBlock(num);
 				return;
-			}	
+			}
 		}
 	}
-	
+
 	void DeleteData(int num) {
 		int oldNum = num;
 		do {
@@ -286,6 +287,7 @@ public:
 				map_dataFile[wholeName] = df;
 				m_currentState = STATE::OUTPUT;
 				m_currentOffset = map_dataFile[m_currentFileName].bytesNum;
+				m_currentState = STATE::OUTPUT;
 				return num;
 			}
 		}
@@ -416,7 +418,7 @@ public:
 			return;
 		}
 		else {
-			if (mode == "I"){
+			if (mode == "I") {
 				m_currentState = STATE::INPUT;
 				m_currentOffset = 0;
 			}
@@ -455,15 +457,21 @@ public:
 				DeleteDir(map_dataFile[name].parent, name);
 			}
 		}
-		else { 
+		else {
 			cout << "**************WARNING************* :" << endl;
 			cout << "No such file!!" << endl;
 			cout << "********************************** :" << endl;
 		}
 	}
 
+	void addBlank(char* str, int num) {
+		//assert(num <= BLOCK_DATA_SIZE);
+		memset(str, ' ', min(num, BLOCK_DATA_SIZE));
+		str[BLOCK_DATA_SIZE - 1] = '\0';
+	}
+
 	void Read(initializer_list<string> str) {
-		if (m_currentState != STATE::INPUT || m_currentState != STATE::UPDATE) {
+		if (m_currentState != STATE::INPUT && m_currentState != STATE::UPDATE) {
 			cout << "**************WARNING************* :" << endl;
 			cout << "Only INPUT or UPDATE mode can read!" << endl;
 			cout << "********************************** :" << endl;
@@ -478,11 +486,11 @@ public:
 		string outPut(&block.user_data[0], &block.user_data[0] + min(fileBytesNum, bytesNum));
 		cout << outPut << endl;
 		if (fileBytesNum < bytesNum)
-			cout << "*******N is less than file length, the end of file is reached.**********" << endl;
+			cout << "*******File length is less than N , the end of file is reached.**********" << endl;
 	}
 
 	void Write(initializer_list<string> str) {
-		if (m_currentState != STATE::OUTPUT || m_currentState != STATE::UPDATE) {
+		if (m_currentState != STATE::OUTPUT && m_currentState != STATE::UPDATE) {
 			cout << "**************WARNING************* :" << endl;
 			cout << "Only OUTPUT or UPDATE mode can write!" << endl;
 			cout << "********************************** :" << endl;
@@ -496,7 +504,7 @@ public:
 		int needBlkNum = -1;
 		if (bytesNum % BLOCK_DATA_SIZE == 0)
 			needBlkNum = bytesNum / BLOCK_DATA_SIZE;
-		else 
+		else
 			needBlkNum = bytesNum / BLOCK_DATA_SIZE + 1;
 		if (needBlkNum > m_freeBlkNum) {
 			//MemoryCompaction();
@@ -518,12 +526,16 @@ public:
 
 			if (fileBytesNum == 0) {
 				while (needBlkNum--) {
-					memcpy(block.user_data, text.c_str(), sizeof(block.user_data));
+					memcpy(block.user_data, text.c_str(), BLOCK_DATA_SIZE);
+					if (text.length() < bytesNum)
+						addBlank(block.user_data + text.length(), bytesNum - text.length());
 					text = text.substr(std::min((int)text.size(), BLOCK_DATA_SIZE));
 					bytesNum -= BLOCK_DATA_SIZE;
 					T_BLOCK& dataBlk = allocateBlock();
 					if (!allocateSuccess(dataBlk))
 						return;
+					T_Data tempData;
+					memcpy(&(dataBlk.block), &tempData, sizeof(T_Data));
 					T_Data& tempBlk = GetDataBlockByNum(dataBlk.num);
 					tempBlk.back = dataBlkNum;
 					dataBlkNum = dataBlk.num;
@@ -531,42 +543,91 @@ public:
 					block = tempBlk;
 				}
 				memcpy(block.user_data, text.c_str(), bytesNum);
+				map_dataFile[m_currentFileName].end = bytesNum;
 				map_dataFile[m_currentFileName].bytesNum = originBytesNum;
 			}
 			else {
 				if (m_currentOffset + originBytesNum > fileBytesNum) {
 					//in data file part
-					memcpy(block.user_data + m_currentOffset, text.c_str(), fileBytesNum - m_currentOffset);
-					//out of data file part
-					bytesNum = (bytesNum - fileBytesNum + m_currentOffset);
-
-					while (needBlkNum--) {
-						memcpy(block.user_data, text.c_str(), sizeof(block.user_data));
-						text = text.substr(std::min((int)text.size(), BLOCK_DATA_SIZE));
-						bytesNum -= BLOCK_DATA_SIZE;
-						T_BLOCK& dataBlk = allocateBlock();
-						if (!allocateSuccess(dataBlk))
-							return;
-						T_Data& tempBlk = GetDataBlockByNum(dataBlk.num);
-						tempBlk.back = dataBlkNum;
-						dataBlkNum = dataBlk.num;
-						block.forward = dataBlk.num;
-						block = tempBlk;
+					int index = m_currentOffset / BLOCK_DATA_SIZE;
+					int offset = m_currentOffset % BLOCK_DATA_SIZE;
+					int targetNum = currentDataNum;
+					while (index--) {
+						targetNum = block.forward;
+						block = GetDataBlockByNum(targetNum);
 					}
-					memcpy(block.user_data, text.c_str(), bytesNum);
-					map_dataFile[m_currentFileName].bytesNum = m_currentOffset + originBytesNum;
 
+					while (bytesNum > 0) {
+						int copySize = min(BLOCK_DATA_SIZE - offset, bytesNum);
+						memcpy(block.user_data + offset, text.c_str(), copySize);
+						offset = 0;
+						if (text.length() < bytesNum)
+							addBlank(block.user_data + text.length(), bytesNum - text.length());
+						if (bytesNum <= BLOCK_DATA_SIZE) {
+							map_dataFile[m_currentFileName].end = bytesNum;
+						}
+						bytesNum -= copySize;
+						if (bytesNum > 0) {
+							if (block.forward != -1) {
+								block = GetDataBlockByNum(block.forward);
+								targetNum = block.forward;
+							}
+							else {
+								T_BLOCK& dataBlk = allocateBlock();
+								if (!allocateSuccess(dataBlk))
+									return;
+								T_Data tempData;
+								memcpy(&(dataBlk.block), &tempData, sizeof(T_Data));
+								T_Data& tempBlk = GetDataBlockByNum(dataBlk.num);
+								tempBlk.back = targetNum;
+								targetNum = dataBlk.num;
+								block.forward = targetNum;
+								block = tempBlk;
+							}
+							if (text.length() <= copySize)
+								text = "";
+							else
+								text = text.substr(copySize);	
+						}
+					}
+				
+					map_dataFile[m_currentFileName].bytesNum = m_currentOffset + originBytesNum;
 				}
 				else {
-					memcpy(block.user_data + m_currentOffset, text.c_str(), originBytesNum);
-					//map_dataFile[m_currentFileName].bytesNum = bytesNum;
+					int index = m_currentOffset / BLOCK_DATA_SIZE;
+					int offset = m_currentOffset % BLOCK_DATA_SIZE;
+					int targetNum = m_currentDataBlkNum;
+					while (index--) {
+						targetNum = block.forward;
+						block = GetDataBlockByNum(targetNum);
+					}
+					
+					while (bytesNum > 0) {
+						int copySize = min(BLOCK_DATA_SIZE - offset, bytesNum);
+						offset = 0;
+						memcpy(block.user_data + offset, text.c_str(), copySize);
+						if (text.length() < bytesNum)
+							addBlank(block.user_data + text.length(), bytesNum - text.length());
+						if (text.length() <= copySize)
+							text = "";
+						else
+							text = text.substr(copySize);
+						bytesNum -= copySize;
+						if (bytesNum > 0) {
+							assert(block.forward != -1);
+							block = GetDataBlockByNum(block.forward);
+						}	
+					}
 				}
 			}
 		}
 	}
+	pair<int, int> FindDataNumAndEnd(const T_Data& block, int offset) {
+		int cnt = offset / BLOCK_DATA_SIZE;
+	}
 
 	void Seek(initializer_list<string> str) {
-		if (m_currentState != STATE::INPUT || m_currentState != STATE::UPDATE) {
+		if (m_currentState != STATE::INPUT && m_currentState != STATE::UPDATE) {
 			cout << "**************WARNING************* :" << endl;
 			cout << "Only INPUT or UPDATE mode can seek!" << endl;
 			cout << "********************************** :" << endl;
@@ -583,22 +644,28 @@ public:
 					cout << "**************WARNING************* :" << endl;
 					cout << "In base -1, Offset cannot be negative!" << endl;
 					cout << "********************************** :" << endl;
+					return;
 				}
 				m_currentOffset = max(offset, 0);
+				break;
 			case 0:
 				if (offset < 0) {
 					cout << "**************WARNING************* :" << endl;
 					cout << "In base 0, Position cannot be negative!" << endl;
 					cout << "********************************** :" << endl;
+					return;
 				}
 				m_currentOffset = max(m_currentOffset + offset, 0);
+				break;
 			case +1:
 				if (offset > 0) {
 					cout << "**************WARNING************* :" << endl;
 					cout << "In base 1, Position cannot be positive!" << endl;
 					cout << "********************************** :" << endl;
+					return;
 				}
 				m_currentOffset = map_dataFile[m_currentFileName].bytesNum + min(offset, 0);
+				break;
 			default: 
 				return;
 		}
@@ -617,6 +684,16 @@ int main()
 	system("pause");
     return 0;
 }
+
+
+//bool checkOffsetValid(int offset) {
+//	//every 0-7, 512-519, 1024-1031 cannot be written;
+//	int offset = offset % 512;
+//	if (offset >= 0 && offset <= 7)
+//		return false;
+//	else
+//		return true;
+//}
 
 /*
 void func(initializer_list<string> op)
