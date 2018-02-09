@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
-
 #include <list>
 #include <map>
 #include <sstream>
@@ -242,10 +241,19 @@ public:
 				//memset(data.user_data + start, 0, dataLen);
 			}
 			else {
-				freeBlock(num);
-				return;
+				//freeBlock(num);
+				//return;
 			}
 		}
+		//more than 31 subdirectories
+		if (dir.forward != -1) {
+			DeleteDir(dir.forward, wholeName);
+		}
+		else {
+			freeBlock(num);
+		}
+		
+		return;
 	}
 
 	void DeleteData(int num) {
@@ -296,6 +304,25 @@ public:
 				return num;
 			}
 		}
+
+		//more than 31 subdirectories
+		if (dir.forward != -1) {
+			T_Directory& recurDir = GetDirBlockByNum(dir.forward);
+			return SetDataByRecreate(recurDir, name, wholeName, dir.forward);
+		}
+		else {
+			T_Directory tempBlk;
+			T_BLOCK& block = allocateBlock();
+			if (!allocateSuccess(block))
+				return -1;
+			int num = block.num;
+			memcpy(&(block.block), &tempBlk, sizeof(T_Directory));
+			dir.forward = num;
+			T_BLOCK& blockDir = GetBlockByNum(dirNum);
+			memcpy(&(blockDir.block), &dir, sizeof(T_Directory));
+			T_Directory& recurDir = GetDirBlockByNum(num);
+			return SetSubDirByRecreate(recurDir, name, wholeName, num);
+		}
 		assert(0);
 	}
 
@@ -332,8 +359,26 @@ public:
 				return num;
 			}
 			else {
-				assert(0);
+				//assert(0);
 			}
+		}
+		//more than 31 subdirectories
+		if (dir.forward != -1) {
+			T_Directory& recurDir = GetDirBlockByNum(dir.forward);
+			return SetSubDirByRecreate(recurDir, name, wholeName, dir.forward);
+		}
+		else {
+			T_Directory tempBlk;
+			T_BLOCK& block = allocateBlock();
+			if (!allocateSuccess(block))
+				return -1;
+			int num = block.num;
+			memcpy(&(block.block), &tempBlk, sizeof(T_Directory));
+			dir.forward = num;
+			T_BLOCK& blockDir = GetBlockByNum(dirNum);
+			memcpy(&(blockDir.block), &dir, sizeof(T_Directory));
+			T_Directory& recurDir = GetDirBlockByNum(num);
+			return SetSubDirByRecreate(recurDir, name, wholeName, num);
 		}
 		assert(0);
 	}
@@ -365,9 +410,29 @@ public:
 				return num;
 			}
 			else {
-				assert(0);
+				//assert(0);
 			}
 		}
+		//more than 31 subdirectorie
+		if (dir.forward != -1) {
+			T_Directory& recurDir = GetDirBlockByNum(dir.forward);
+			return SetSubDir(recurDir, name, dir.forward, wholeName);
+		}
+		else {
+			T_Directory tempBlk;
+			T_BLOCK& block = allocateBlock();
+			if (!allocateSuccess(block))
+				return -1;
+			int num = block.num;
+			memcpy(&(block.block), &tempBlk, sizeof(T_Directory));
+			dir.forward = num;
+			T_BLOCK& blockDir = GetBlockByNum(dirNum);
+			memcpy(&(blockDir.block), &dir, sizeof(T_Directory));
+			T_Directory& recurDir = GetDirBlockByNum(num);
+			return SetSubDir(recurDir, name, num, wholeName);
+		}
+		
+		
 		assert(0);
 	}
 
@@ -386,6 +451,7 @@ public:
 		else
 			(this->*pFun)({ str2, str3 });
 	}
+
 
 	void Create(initializer_list<string> str) {
 		assert(str.size() == 2);
@@ -466,6 +532,8 @@ public:
 						memset(dir.subdir[i].name, 0, sizeof(dir.subdir[i].name));
 						dir.subdir[i].link = -1;
 						dir.subdir[i].size = -1;
+						map_dataFile.erase(name);
+						return;
 					}
 				}
 			}
@@ -479,10 +547,14 @@ public:
 						memset(dir.subdir[i].name, 0, sizeof(dir.subdir[i].name));
 						dir.subdir[i].link = -1;
 						dir.subdir[i].size = -1;
+						map_dataFile.erase(name);
+						return;
 					}
 				}
 			}
-			map_dataFile.erase(name);
+			else{
+				assert(0);
+			}
 		}
 		else {
 			cout << "**************WARNING************* :" << endl;
